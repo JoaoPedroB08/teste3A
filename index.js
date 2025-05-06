@@ -47,6 +47,12 @@ app.patch("/clientes/:id", async (req, res) => {
     res.sendStatus(200) // 200 é o código de atualização
 })
 
+//Rota para editar com o Put
+app.put("/clientes/:id", async (req, res) => {
+    await db.putCustomer(req.params.id, req.body)
+    res.sendStatus(200)
+})
+
 // Rota para excluir cliente
 app.delete("/clientes/:id", async (req, res) => {
     await db.deleteCustomer(req.params.id)

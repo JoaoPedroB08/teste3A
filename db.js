@@ -1,105 +1,161 @@
+const { Pool } = require("pg");
+
+// Função para verificar e criar o banco de dados "tests" se ele não existir.
+async function ensureDatabase() {
+  // Conecta ao banco padrão "postgres" para realizar a verificação.
+  const defaultPool = new Pool({
+    user: process.env.USER_NAME,
+    host: process.env.HOST_NAME,
+    database: "postgres", // Banco padrão para operações administrativas
+    password: process.env.DB_PASSWORD,
+    port: process.env.PORT_NUMBER
+  });
+  
+  const client = await defaultPool.connect();
+  const dbName = process.env.DB_NAME; // Espera-se que seja "tests"
+  
+  // Verifica se o banco de dados existe
+  const result = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [dbName]);
+  
+  if (result.rowCount === 0) {
+    console.log(`Banco de dados "${dbName}" não existe. Criando...`);
+    await client.query(`CREATE DATABASE ${dbName}`);
+    console.log(`Banco de dados "${dbName}" criado com sucesso!`);
+  } else {
+    console.log(`Banco de dados "${dbName}" já existe.`);
+  }
+  
+  client.release();
+  await defaultPool.end();
+}
+
+// Função para verificar e criar a tabela "clientes" se ela não existir.
+async function ensureTable() {
+  // Conectando ao banco de dados "tests" (configurado em process.env.DB_NAME)
+  const pool = new Pool({
+    user: process.env.USER_NAME,
+    host: process.env.HOST_NAME,
+    database: process.env.DB_NAME,
+    password: process.env.DB_PASSWORD,
+    port: process.env.PORT_NUMBER
+  });
+  
+  const client = await pool.connect();
+  
+  // Cria a tabela se ela não existir
+  const createTableQuery = `
+    CREATE TABLE IF NOT EXISTS clientes (
+      id SERIAL PRIMARY KEY,
+      nome VARCHAR(100) NOT NULL,
+      idade INTEGER,
+      uf CHAR(2)
+    );
+  `;
+  await client.query(createTableQuery);
+  
+  console.log(`Tabela "clientes" verificada/criada com sucesso.`);
+  
+  client.release();
+  await pool.end();
+}
+
+// Função de inicialização que executa as verificações de banco e tabela.
+async function initializeDatabase() {
+  await ensureDatabase();
+  await ensureTable();
+}
+
+// Executa a inicialização ao iniciar a aplicação com "node index.js"
+initializeDatabase().catch(error => {
+  console.error("Erro durante a inicialização do banco de dados:", error);
+});
+
+// Função para conectar utilizando o padrão singleton.
 async function connect() {
-    const { Pool } = require("pg");
+  // Se já houver uma conexão global, a retorna.
+  if (global.connection)
+    return global.connection.connect();
 
-     // Quando eu chamar a função connect novamente, verificarei se já tenho uma global.connection carregada. Se houver, simplesmente a retornarei.
-     // Essa estratégia é chamada de singleton. Ela impede que você recrie objetos completamente o tempo todo.
-    if(global.connection)
-        return global.connection.connect();
-
-    // Connexão "Pool" é uma estratégia de conexão onde o banco de dados abre algumas conexões e sempre que a gente precisa de uma nova conexão o banco pega nova conexão 
-    // no Pool de conexões já abertos. Se tiver conexão ociosa, é essa que será entregue. Se tiver que criar uma nova conexão, a conexão é criada e se tiver que fechar 
-    // a conexão, a conexão é fechada.
-    // Resumindo: O pool de conexões é usado para gerenciar de forma eficiente o acesso ao banco de dados. Em vez de abrir e fechar uma conexão a cada requisição — o que pode ser custoso em termos de desempenho — o pool mantém um conjunto de conexões abertas que podem ser reutilizadas conforme a demanda da aplicação. Isso resulta em: Melhor desempenho, Uso otimizado dos recursos, Gerenciamento de erros e Escalabilidade
-    const pool = new Pool({
-        user: process.env.USER_NAME,
-        host: process.env.HOST_NAME,
-        database: process.env.DB_NAME,
-        password: process.env.DB_PASSWORD,
-        dialect: process.env.DB_DIALECT,
-        port: process.env.PORT_NUMBER
-    })
-    
-
-    const client = await pool.connect(); // Conectandooo
-    console.log("Connection pool created successfully!")
-
-    const resdb = await client.query("SELECT now()");
-    console.log(resdb.rows[0]); // Tomando a primeira posição do array de onde virá o tempo do banco de dados.
-    client.release()
-
-  // Podemos salvar nosso pool em uma conexão global. Então podemos executar o "if" como no início deste arquivo
-    global.connection = pool;
-
-    return pool.connect()
+  const pool = new Pool({
+    user: process.env.USER_NAME,
+    host: process.env.HOST_NAME,
+    database: process.env.DB_NAME,
+    password: process.env.DB_PASSWORD,
+    dialect: process.env.DB_DIALECT,
+    port: process.env.PORT_NUMBER
+  });
+  
+  const client = await pool.connect();
+  console.log("Connection pool created successfully!");
+  const resdb = await client.query("SELECT now()");
+  console.log(resdb.rows[0]);
+  client.release();
+  
+  // Armazena o pool de conexões globalmente para reutilizá-lo.
+  global.connection = pool;
+  return pool.connect();
 }
 
-connect(); // Lembrando/Lembrete: temos que carregar/importar o arquivo db.js no nosso back-end index.js.
-
-
-// Função para listar clientes
+// Função para listar todos os clientes
 async function selectCustomers() {
-    // Estabelecer conexão
-    const client = await connect();
-
-    // Enviar comando sql para o banco de dados
-    const res = await client.query("SELECT * FROM clientes");
-
-    return res.rows;
+  const client = await connect();
+  const res = await client.query("SELECT * FROM clientes");
+  return res.rows;
 }
 
-// Função para listar um cliente
+// Função para listar um cliente específico
 async function selectCustomer(id) {
-    // Estabelecer conexão
-    const client = await connect();
-
-    // Envia comando sql para o banco de dados
-    // const res = await client.query("SELECT * FROM clientes WHERE ID=" +id); // Isso pode causar injeção de SQL
-    const res = await client.query("SELECT * FROM clientes WHERE ID=$1", [id]); // Declaração preparada ou consulta preparada
-
-    return res.rows;
+  const client = await connect();
+  const res = await client.query("SELECT * FROM clientes WHERE id=$1", [id]);
+  return res.rows;
 }
 
-// Função para inserir clientes
+// Função para inserir um cliente
 async function insertCustomer(customer) {
-   // Estabelecer conexão
-    const client = await connect();
-    // query
-    // Obs.: O "id" é incremental. Não precisa ser passado
-    const sql = "INSERT INTO clientes(nome, idade, uf) VALUES ($1, $2, $3)";
-    // parâmetros que devem ser injetados na consulta
-    const values = [customer.nome, customer.idade, customer.uf];
-    // não tem retorno
-    await client.query(sql, values)
+  const client = await connect();
+  const sql = "INSERT INTO clientes(nome, idade, uf) VALUES ($1, $2, $3)";
+  const values = [customer.nome, customer.idade, customer.uf];
+  await client.query(sql, values);
 }
 
-// Função para editar/atualizar clientes
+// Função para atualizar um cliente
 async function updateCustomer(id, customer) {
-    // Estabelecer conexão
-    const client = await connect();
-    // query
-    const sql = "UPDATE clientes SET nome=$1, idade=$2, uf=$3 WHERE id=$4";
-    // parâmetros que devem ser injetados na consulta
-    const values = [customer.nome, customer.idade, customer.uf, id];
-    // não tem retorno
-    await client.query(sql, values);
+  const client = await connect();
+  const sql = "UPDATE clientes SET nome=$1, idade=$2, uf=$3 WHERE id=$4";
+  const values = [customer.nome, customer.idade, customer.uf, id];
+  await client.query(sql, values);
 }
 
-// Função para excluir clientes
+// Função para atualizar um cliente
+async function putCustomer(id, customer) {
+  const client = await connect();
+
+  const sql = "UPDATE clientes SET nome=$1, idade=$2, uf=$3 WHERE id=$4";
+
+  const values = [
+    customer.nome !== undefined ? customer.nome : "João Cleber",
+    customer.idade !== undefined ? customer.idade : null,
+    customer.uf !== undefined ? customer.uf : null,
+    id
+  ]
+
+  await client.query(sql, values);
+}
+
+// Função para excluir um cliente
 async function deleteCustomer(id) {
-   // Estabelecer conexão
-    const client = await connect();
-    // parâmetros que devem ser injetados na consulta
-    const sql = "DELETE FROM clientes WHERE id=$1";
-    const values = [id];
-    // não tem retorno
-    await client.query(sql, values)
+  const client = await connect();
+  const sql = "DELETE FROM clientes WHERE id=$1";
+  const values = [id];
+  await client.query(sql, values);
 }
 
-// Exportando cada função para que a gente consiga as usar no nosso backend!!!
+// Exporta as funções para que possam ser utilizadas no backend
 module.exports = {
-    selectCustomers,
-    selectCustomer,
-    insertCustomer,
-    updateCustomer,
-    deleteCustomer
-}
+  selectCustomers,
+  selectCustomer,
+  insertCustomer,
+  updateCustomer,
+  deleteCustomer,
+  putCustomer,
+};
